@@ -1,0 +1,225 @@
+---
+title: "Credit Analysis"
+author: "Baojia Huang"
+date: "2023-05-08"
+output: html_document
+---
+```{r}
+df <- read.csv("CreditReportMockData.csv")
+head(df)
+```
+
+
+```{r}
+library(lubridate)
+df$open_date <- as.Date(df$open_date)
+df$close_date <- as.Date(df$close_date)
+df$first_due_date <- as.Date(df$first_due_date)
+df$last_payment_date <- as.Date(df$last_payment_date)
+df$delinquency_date <- as.Date(df$delinquency_date)
+
+df$open_month <- month(df$open_date)
+df$open_week <- week(df$open_date)
+df$open_yearweek <- paste(year(df$open_date), week(df$open_date), sep = "-")
+df$open_yearmonth <- format(df$open_date, "%Y-%m")
+
+df$close_month <- month(df$close_date)
+df$close_week <- week(df$close_date)
+df$close_yearweek <- paste(year(df$close_date), week(df$close_date), sep = "-")
+df$close_yearmonth <- format(df$close_date, "%Y-%m")
+
+df$first_due_month <- month(df$first_due_date)
+df$first_due_week <- week(df$first_due_date)
+df$first_due_yearweek <- paste(year(df$first_due_date), week(df$first_due_date), sep = "-")
+df$first_due_yearmonth <- format(df$first_due_date, "%Y-%m")
+
+df$last_payment_month <- month(df$last_payment_date)
+df$last_payment_week <- week(df$last_payment_date)
+df$last_payment_yearweek <- paste(year(df$last_payment_date), week(df$last_payment_date), sep = "-")
+df$last_payment_yearmonth <- format(df$last_payment_date, "%Y-%m")
+
+df$delinquency_month <- month(df$delinquency_date)
+df$delinquency_week <- week(df$delinquency_date)
+df$delinquency_yearweek <- paste(year(df$delinquency_date), week(df$delinquency_date), sep = "-")
+df$delinquency_yearmonth <- format(df$delinquency_date, "%Y-%m")
+
+head(df)
+```
+
+
+```{r}
+library(dplyr)
+# log of highest_credit
+df$highest_credit_log <- log(abs(df$highest_credit)+1)
+
+#means of the highest_credit
+df <- df %>%
+  group_by(id) %>%
+  mutate(highest_credit_mean = mean(highest_credit))
+```
+
+```{r}
+#percent deviation from individual-level means of the highest_credit
+df <- df %>% 
+  group_by(id) %>% 
+  mutate(highest_credit_deviation = highest_credit / mean(highest_credit))
+df
+```
+
+
+```{r}
+df$open_after_FL <- ifelse(df$open_date > as.Date("2019-07-01"), 1,0)
+df
+```
+
+
+```{r}
+df$is_installment <- ifelse(df$portfolio == "Installment", 1, 0)
+df$is_realtime_installment <- ifelse(df$portfolio == "Real-Time Installment Loans", 1, 0)
+df$is_payday <- ifelse(df$portfolio == "Single Payment Loan", 1, 0)
+```
+
+
+```{r}
+library(ggplot2)
+#number of loans
+loan_counts <- df %>%
+  group_by(open_yearweek) %>%
+  summarise(installment_loans = sum(is_installment),
+            payday_loans = sum(is_payday))
+loan_counts
+
+#share of loans
+loan_shares <- df %>%
+  group_by(open_yearweek) %>%
+  summarise(installment_share = mean(is_installment),
+            payday_share = mean(is_payday))
+loan_shares
+
+#number plot
+ggplot(loan_counts, aes(x = open_yearweek)) +
+  geom_line(aes(y = installment_loans, group = 1), color = "blue") +
+  geom_line(aes(y = payday_loans, group = 1), color = "light pink") +
+  labs(x = "Week", y = "Number of loans",
+       title = "Number of Installment and Payday Loans Opened per Week")
+
+#share plot
+ggplot(loan_shares, aes(x = open_yearweek)) +
+  geom_line(aes(y = installment_share, group = 1), color = "blue") +
+  geom_line(aes(y = payday_share, group = 1), color = "light pink") +
+  labs(x = "Week", y = "Number of loans",
+       title = "Number of Installment and Payday Loans Opened per Week")
+```
+
+
+
+```{r}
+df$treatment_intensity <- ifelse(df$state == "FL", 1,0)
+df$charged_off <- ifelse(df$charge_off == "Yes", 1,0)
+```
+
+
+```{r}
+library(lfe)
+reg_installment <- felm(is_installment ~ open_after_FL * treatment_intensity | id + open_yearweek | 0 | id, data = df)
+summary(reg_installment)
+
+reg_payday <- felm(is_payday ~ open_after_FL * treatment_intensity | id + open_yearweek | 0 | id, data = df)
+summary(reg_payday)
+```
+
+
+```{r}
+#duration regression
+reg_duration <- felm(duration ~ open_after_FL*treatment_intensity*is_installment | id+open_yearweek | 0 | id, data=df)
+
+#highest credit regression
+reg_highest_credit_log <- felm(highest_credit_log ~ open_after_FL*treatment_intensity*is_installment | id+open_yearweek | 0 | id, data=df)
+reg_highest_credit_mean <- felm(highest_credit_mean ~ open_after_FL*treatment_intensity*is_installment | id+open_yearweek | 0 | id, data=df)
+reg_highest_credit_deviation <- felm(highest_credit_deviation ~ open_after_FL*treatment_intensity*is_installment | id+open_yearweek | 0 | id, data=df)
+
+#delinquent regression
+reg_delinquent <- felm(charged_off ~ open_after_FL*treatment_intensity*is_installment | id+open_yearweek | 0 | id, data=df)
+
+summary(reg_duration)
+summary(reg_highest_credit_log)
+summary(reg_highest_credit_mean)
+summary(reg_highest_credit_deviation)
+summary(reg_delinquent)
+```
+
+
+```{r}
+library(ggplot2)
+
+# 1. df$state==FL, df$amount, by open_after_FL
+ggplot(df[df$state == "FL", ], aes(x = amount, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Loan Amounts-All Loans IN FL")
+
+# 2. df$state==FL, df$expected_payment, by open_after_FL
+ggplot(df[df$state == "FL", ], aes(x = expected_payment, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Repayment Amounts-All Loans IN FL")
+
+# 3. df$state!=FL, df$amount, by open_after_FL
+ggplot(df[df$state != "FL", ], aes(x = amount, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Loan Amounts-All Loans NOT IN FL")
+
+# 4. df$state!=FL, df$expected_payment, by open_after_FL
+ggplot(df[df$state != "FL", ], aes(x = expected_payment, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Repayment Amounts-All Loans NOT IN FL")
+
+# 5."Installment", df$state==FL, df$amount, by open_after_FL
+ggplot(df[df$state == "FL" & df$portfolio == "Installment", ], aes(x = amount, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Loan Amounts-Installment Loans IN FL")
+
+# 6."Installment", df$state==FL, df$expected_payment, by open_after_FL
+ggplot(df[df$state == "FL" & df$portfolio == "Installment", ], aes(x = expected_payment, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Repayment Amounts-Installment Loans IN FL")
+
+# 7."Installment"，df$state!=FL, df$amount, by open_after_FL
+ggplot(df[df$state != "FL" & df$portfolio == "Installment", ], aes(x = amount, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Loan Amounts-Installment Loans NOT IN FL")
+
+# 8."Installment"，df$state!=FL, df$expected_payment, by open_after_FL
+ggplot(df[df$state != "FL" & df$portfolio == "Installment", ], aes(x = expected_payment, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Repayment Amounts-Installment Loans NOT IN FL")
+
+# 9."Single Payment Loan"，df$state==FL, df$amount, by open_after_FL
+ggplot(df[df$state == "FL" & df$portfolio == "Single Payment Loan", ], aes(x = amount, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Loan Amounts-Payday Loans IN FL")
+
+# 10."Single Payment Loan"，df$state==FL, df$expected_payment, by open_after_FL
+ggplot(df[df$state == "FL" & df$portfolio == "Single Payment Loan", ], aes(x = expected_payment, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Repayment Amounts-Payday Loans IN FL")
+
+# 11."Single Payment Loan"，df$state!=FL, df$amount, by open_after_FL
+ggplot(df[df$state != "FL" & df$portfolio == "Single Payment Loan", ], aes(x = amount, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Loan Amounts-Payday Loans NOT IN FL")
+
+# 12. Single Payment Loan"，df$state!=FL, df$expected_payment, by open_after_FL
+ggplot(df[df$state != "FL" & df$portfolio == "Single Payment Loan", ], aes(x = expected_payment, fill = factor(open_after_FL))) +
+  geom_density(alpha = 0.5)+
+  ggtitle("Repayment Amounts-Payday Loans NOT IN FL")
+```
+
+
+
+
+
+
+
+
+
+
+
